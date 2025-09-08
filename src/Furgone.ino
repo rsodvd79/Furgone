@@ -1,0 +1,859 @@
+#include <coredecls.h>                  // settimeofday_cb()
+#include <PolledTimeout.h>
+#include <time.h>                       // time() ctime()
+#include <sys/time.h>                   // struct timeval
+#include <TZ.h>
+#include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#define SSD1306_NO_SPLASH
+#include <Adafruit_SSD1306.h>
+#include <ArduinoOTA.h>
+#include <LittleFS.h> // LittleFS is declared
+#include "eyes.h"
+#include "meteo.h"
+#include "Button.h"
+#include "screen.h"
+#include "GOL.h"
+
+Adafruit_SSD1306 display(128, 32, &Wire, -1);
+
+
+String ssid = "";
+String password = "";
+String mdns_name = "FURGONE";
+
+static timeval tv;
+static time_t xnow;
+
+static esp8266::polledTimeout::periodicMs showTimeNow(250);
+static esp8266::polledTimeout::periodicMs showSTimeNow(500);
+static esp8266::polledTimeout::periodicMs showWifiNow(500);
+static esp8266::polledTimeout::periodicMs showEyesNow(125);
+static esp8266::polledTimeout::periodicMs showMeteoNow(1000 * 30);
+static esp8266::polledTimeout::periodicMs showCicloScreenNow(1000 * 60);
+static esp8266::polledTimeout::periodicMs showGOLNow(80);
+static esp8266::polledTimeout::periodicMs adjustBrightnessNow(1000 * 60);
+static esp8266::polledTimeout::periodicMs invertPulseNow(1000 * 60 * 10);
+static int time_machine_days = 0; // 0 = now
+static bool time_machine_running = false;
+static bool tsep = true;
+//static bool keyp = false;
+
+ESP8266WebServer server(80);
+classEye eye = classEye();
+classButton Bottone = classButton(12, ButtonType::PULLUP);
+classMeteo meteo = classMeteo();
+classScreen screen = classScreen(5);
+bool CicloScreen = false;
+classGOL GOL = classGOL();
+
+// HTTP handlers prototypes
+void handleSetupGet();
+void handleSetupPost();
+void handleStatus();
+void handleOled();
+
+void handleRoot() {
+	digitalWrite(LED_BUILTIN, LOW);
+
+	String message = F("");
+
+	if (LittleFS.exists("/INDEX.HTM")) {
+		File fhtm = LittleFS.open("/INDEX.HTM", "r");
+		if (fhtm) {
+			message = fhtm.readString();
+			fhtm.close();
+		}
+	}
+
+	server.send(200, F("text/html"), message);
+	digitalWrite(LED_BUILTIN, HIGH);
+}
+
+void handleNotFound() {
+	digitalWrite(LED_BUILTIN, LOW);
+
+	String message = F("");
+
+	if (LittleFS.exists("/M404.HTM")) {
+		File fhtm = LittleFS.open("/M404.HTM", "r");
+		if (fhtm) {
+			message = fhtm.readString();
+			fhtm.close();
+		}
+	}
+
+	server.send(404, F("text/html"), message);
+	digitalWrite(LED_BUILTIN, HIGH);
+}
+
+void time_is_set_scheduled() {
+	// everything is allowed in this function
+
+	if (time_machine_days == 0) {
+		time_machine_running = !time_machine_running;
+	}
+
+	// time machine demo
+	if (time_machine_running) {
+		digitalWrite(LED_BUILTIN, LOW);
+
+		xnow = time(nullptr);
+
+		const tm* tm = localtime(&xnow);
+
+		gettimeofday(&tv, nullptr);
+		constexpr int days = 30;
+		time_machine_days += days;
+		if (time_machine_days > 360) {
+			tv.tv_sec -= (time_machine_days - days) * 60 * 60 * 24;
+			time_machine_days = 0;
+		}
+		else {
+			tv.tv_sec += days * 60 * 60 * 24;
+		}
+		settimeofday(&tv, nullptr);
+
+		digitalWrite(LED_BUILTIN, HIGH);
+	}
+
+}
+
+int dBmtoPercentage(int dBm) {
+	int RSSI_MAX = 0;//-50 // define maximum strength of signal in dBm
+	int RSSI_MIN = -100;// define minimum strength of signal in dBm
+	int quality = 0;
+
+	if (dBm <= RSSI_MIN)
+	{
+		quality = 0;
+	}
+	else if (dBm >= RSSI_MAX)
+	{
+		quality = 100;
+	}
+	else
+	{
+		quality = 2 * (dBm + 100);
+	}
+
+	return quality;
+}
+
+void showScreen0(bool cmp) {
+	display.clearDisplay();
+	display.setTextSize(1);
+	display.setCursor(0, 0);
+	display.print(F("Con. to ")); display.println(ssid);
+	display.print(F("IP : ")); display.println(WiFi.localIP());
+	if (cmp) {
+		display.print(F("mDNS : ")); display.println(mdns_name);
+		int rssi = WiFi.RSSI();
+		display.print(F("RSSI : ")); display.print(rssi); display.print(F(" dBm ")); display.print(dBmtoPercentage(rssi)); display.println(F(" %"));
+	}
+	display.display();
+}
+
+void showScreen1() {
+	gettimeofday(&tv, nullptr);
+    // removed unused clock_gettime call
+	xnow = time(nullptr);
+
+	if (showSTimeNow) {
+		tsep = tsep ? false : true;
+	}
+
+	char LCDTime[9];
+
+	if (tsep == 0) {
+		strftime(LCDTime, 9, "%H:%M:%S", localtime(&xnow));
+	}
+	else {
+		strftime(LCDTime, 9, "%H %M %S", localtime(&xnow));
+	}
+
+	char LCDDate[11];
+
+	strftime(LCDDate, 11, "%d/%m/%Y", localtime(&xnow));
+
+	display.clearDisplay();
+
+	display.setTextSize(2);
+	display.setCursor(17, 7);
+	display.print(LCDTime);
+
+	display.setTextSize(1);
+	display.setCursor(35, 24);
+	display.print(LCDDate);
+
+	display.display();
+}
+
+void showScreen2() {
+
+	display.clearDisplay();
+
+	switch (eye.Next())
+	{
+	case 0:
+		display.drawBitmap(0, 0, eye1, 128, 32, 1);
+		break;
+	case 1:
+		display.drawBitmap(0, 0, eye2, 128, 32, 1);
+		break;
+	case 2:
+		display.drawBitmap(0, 0, eye3, 128, 32, 1);
+		break;
+	case 3:
+		display.drawBitmap(0, 0, eye4, 128, 32, 1);
+		break;
+	case 4:
+		display.drawBitmap(0, 0, eye5, 128, 32, 1);
+		break;
+	case 5:
+		display.drawBitmap(0, 0, eye6, 128, 32, 1);
+		break;
+	case 6:
+		display.drawBitmap(0, 0, eye7, 128, 32, 1);
+		break;
+	case 7:
+		display.drawBitmap(0, 0, eye8, 128, 32, 1);
+		break;
+	case 8:
+		display.drawBitmap(0, 0, eye9, 128, 32, 1);
+		break;
+	case 9:
+		display.drawBitmap(0, 0, eye10, 128, 32, 1);
+		break;
+	case 10:
+		display.drawBitmap(0, 0, eye11, 128, 32, 1);
+		break;
+	case 11:
+		display.drawBitmap(0, 0, eye12, 128, 32, 1);
+		break;
+	case 12:
+		display.drawBitmap(0, 0, eye13, 128, 32, 1);
+		break;
+	case 13:
+		display.drawBitmap(0, 0, eye14, 128, 32, 1);
+		break;
+		//case 14:
+		//	display.drawBitmap(0, 0, eye15, 128, 32, 1);
+		//	break;
+		//case 15:
+		//	display.drawBitmap(0, 0, eye16, 128, 32, 1);
+		//	break;
+	}
+
+	display.display();
+
+}
+
+void showScreen3() {
+	display.clearDisplay();
+	display.setCursor(0, 0);
+	display.setTextSize(1);
+	display.print(F("TEMP. ")); display.printf("%.1f", meteo.temp); display.println(F(" C"));
+	display.print(F("UMID. ")); display.printf("%d", meteo.humidity); display.println(F(" %"));
+	display.print(F("VENTO ")); display.printf("%.1f", meteo.wind_speed); display.println(F(" m/s"));
+	display.print(meteo.description);
+
+	if (meteo.icon == F("01D")) { // clear sky
+		display.drawBitmap(128 - 32, 0, Sun, 32, 32, 1);
+
+	}
+	else if (meteo.icon == F("01N")) { // clear sky
+		display.drawBitmap(128 - 32, 0, Moon, 32, 32, 1);
+
+	}
+	else if (meteo.icon == F("02D")) { // few clouds
+		display.drawBitmap(128 - 32, 0, CloudyDay, 32, 32, 1);
+
+	}
+	else if (meteo.icon == F("02N")) { // few clouds
+		display.drawBitmap(128 - 32, 0, CloudyNight, 32, 32, 1);
+
+	}
+	else if (meteo.icon == F("03D") || meteo.icon == F("03N")) { // scattered clouds
+		display.drawBitmap(128 - 32, 0, Clouds, 32, 32, 1);
+
+	}
+	else if (meteo.icon == F("04D") || meteo.icon == F("04N")) { // broken clouds
+		display.drawBitmap(128 - 32, 0, Clouds, 32, 32, 1);
+
+	}
+	else if (meteo.icon == F("09D") || meteo.icon == F("09N")) { // shower rain
+		display.drawBitmap(128 - 32, 0, Downpour, 32, 32, 1);
+
+	}
+	else if (meteo.icon == F("10D") || meteo.icon == F("10N")) { // rain
+		display.drawBitmap(128 - 32, 0, Rain, 32, 32, 1);
+
+	}
+	else if (meteo.icon == F("11D") || meteo.icon == F("11N")) { // thunderstorm
+		display.drawBitmap(128 - 32, 0, Storm, 32, 32, 1);
+
+	}
+	else if (meteo.icon == F("13D") || meteo.icon == F("13N")) { // snow
+		display.print(F(" ")); display.printf("%.1f", meteo.snow); display.print(F(" mm/h"));
+		display.drawBitmap(128 - 32, 0, Snow, 32, 32, 1);
+
+	}
+	else if (meteo.icon == F("50D")) { // mist
+		display.drawBitmap(128 - 32, 0, FogDay, 32, 32, 1);
+
+	}
+	else if (meteo.icon == F("50N")) { // mist
+		display.drawBitmap(128 - 32, 0, FogNight, 32, 32, 1);
+
+	}
+	else if (meteo.icon == F("ERR")) { // mist
+		display.drawBitmap(128 - 32, 0, MeteoErr, 32, 32, 1);
+
+	}
+
+	display.display();
+
+}
+
+void showScreen4() {
+
+	display.clearDisplay();
+
+	for (byte X = 0; X < MondoLarghezza; X++) {
+		for (byte Y = 0; Y < MondoAltezza; Y++) {
+			if (GOL.Mondo[X][Y]) {
+				byte x = map(X, 0, MondoLarghezza, 0, 128);
+				display.drawPixel(x, Y, WHITE);
+				display.drawPixel(x + 1, Y, WHITE);
+			}
+		}
+	}
+
+	display.display();
+}
+
+void showScreen5() {
+	display.clearDisplay();
+	display.setTextSize(2);
+	display.setCursor(20, 7);
+	display.println(F("CICLO"));
+	display.display();
+}
+
+void showScreenInit(unsigned int s) {
+
+	switch (screen.Current(s))
+	{
+	case 0:
+		showScreen0(true);
+		break;
+	case 1:
+		showScreen1();
+		break;
+	case 2:
+		showScreen2();
+		break;
+	case 3:
+		showScreen3();
+		break;
+	case 4:
+		// GOL.Genesi();
+		showScreen4();
+		break;
+	case 5:
+		showScreen5();
+		break;
+	}
+
+}
+
+void AddScreenRows(String r) {
+	display.clearDisplay();
+	display.setTextSize(1);
+	display.setTextColor(SSD1306_WHITE);
+	display.setCursor(0, 0);
+
+	screen.RowAdd(r);
+
+	for (unsigned int i = 0; i < 4; i++) {
+		display.println(screen.rows[i]);
+	}
+
+	display.display();
+	delay(250);
+
+}
+
+void setup(void) {
+
+	pinMode(LED_BUILTIN, OUTPUT);
+	digitalWrite(LED_BUILTIN, HIGH);
+
+	if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+		digitalWrite(LED_BUILTIN, LOW);
+		for (;;);
+	}
+
+	display.clearDisplay();
+	display.setTextSize(1);
+	display.setTextColor(SSD1306_WHITE);
+	display.setCursor(0, 0);
+	display.display();
+
+    screen.RowClear();
+    bool wifiConfigured = true;
+
+	if (LittleFS.begin()) {
+		AddScreenRows(F("FS OK"));
+		if (LittleFS.exists("/SCREEN.TXT")) {
+			File fscr = LittleFS.open("/SCREEN.TXT", "r");
+			if (fscr) {
+				AddScreenRows(F("FILE SCREEN.TXT OK"));
+				String scr = fscr.readString();
+				scr.trim();
+				screen.Current(scr.toInt());
+				fscr.close();
+			}
+			else {
+				AddScreenRows(F("FILE SCREEN.TXT KO"));
+			}
+		}
+		else {
+			AddScreenRows(F("FILE SCREEN.TXT KO"));
+		}
+        if (LittleFS.exists("/WIFI_SID.TXT")) {
+            File fsid = LittleFS.open("/WIFI_SID.TXT", "r");
+            if (fsid) {
+                AddScreenRows(F("FILE WIFI_SID.TXT OK"));
+                ssid = fsid.readString();
+                ssid.trim();
+                fsid.close();
+            }
+            else {
+                AddScreenRows(F("FILE WIFI_SID.TXT KO"));
+                wifiConfigured = false;
+            }
+        }
+        else {
+            AddScreenRows(F("FILE WIFI_SID.TXT KO"));
+            wifiConfigured = false;
+        }
+        if (LittleFS.exists("/WIFI_PWD.TXT")) {
+            File fpwd = LittleFS.open("/WIFI_PWD.TXT", "r");
+            if (fpwd) {
+                AddScreenRows(F("FILE WIFI_PWD.TXT OK"));
+                password = fpwd.readString();
+                password.trim();
+                fpwd.close();
+            }
+            else {
+                AddScreenRows(F("FILE WIFI_PWD.TXT KO"));
+                wifiConfigured = false;
+            }
+        }
+        else {
+            AddScreenRows(F("FILE WIFI_PWD.TXT KO"));
+            wifiConfigured = false;
+        }
+        if (LittleFS.exists("/MDNS_NM.TXT")) {
+            File fmdns = LittleFS.open("/MDNS_NM.TXT", "r");
+            if (fmdns) {
+                AddScreenRows(F("FILE MDNS_NM.TXT OK"));
+                mdns_name = fmdns.readString();
+                mdns_name.trim();
+                fmdns.close();
+            }
+            else {
+                AddScreenRows(F("FILE MDNS_NM.TXT KO"));
+            }
+        }
+        else {
+            AddScreenRows(F("FILE MDNS_NM.TXT KO"));
+        }
+		if (LittleFS.exists("/METEO_API.TXT")) {
+			File fmta = LittleFS.open("/METEO_API.TXT", "r");
+			if (fmta) {
+				AddScreenRows(F("FILE METEO_API.TXT OK"));
+				meteo.Api = fmta.readString();
+				meteo.Api.trim();
+				fmta.close();
+			}
+			else {
+				AddScreenRows(F("FILE METEO_API.TXT KO"));
+			}
+		}
+		else {
+			AddScreenRows(F("FILE METEO_API.TXT KO"));
+		}
+	}
+	else {
+		AddScreenRows(F("FS KO"));
+	}
+
+	delay(500);
+
+    // decide network mode
+    if (wifiConfigured && ssid.length() > 0 && password.length() > 0) {
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(ssid, password);
+
+        // Wait for connection with timeout
+        int s = 100;
+        const unsigned long connectTimeout = 20000; // 20s
+        unsigned long start = millis();
+        while (WiFi.status() != WL_CONNECTED && (millis() - start) < connectTimeout) {
+            delay(500);
+            if (s > 20) {
+                display.clearDisplay();
+                display.setCursor(0, 0);
+                display.println(F("Connessione a"));
+                display.println(ssid);
+                s = 0;
+            }
+            s++;
+            display.print("."); display.display();
+        }
+
+        if (WiFi.status() == WL_CONNECTED) {
+            showScreen0(false);
+
+            if (MDNS.begin(mdns_name)) {
+                display.println(F("mDNS responder start"));
+            }
+            else {
+                display.println(F("mDNS responder stop"));
+            }
+
+            display.display();
+        } else {
+            // Connection failed: fallback to AP mode with SSID = mdns_name
+            WiFi.disconnect(true);
+            WiFi.mode(WIFI_AP);
+            WiFi.softAP(mdns_name.c_str());
+            IPAddress apIP = WiFi.softAPIP();
+
+            display.clearDisplay();
+            display.setCursor(0, 0);
+            display.println(F("AP MODE"));
+            display.print(F("SSID: ")); display.println(mdns_name);
+            display.print(F("IP  : ")); display.println(apIP);
+            display.display();
+        }
+    } else {
+        // Fallback AP mode with SSID = mdns_name, open network
+        WiFi.mode(WIFI_AP);
+        WiFi.softAP(mdns_name.c_str());
+        IPAddress apIP = WiFi.softAPIP();
+
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.println(F("AP MODE"));
+        display.print(F("SSID: ")); display.println(mdns_name);
+        display.print(F("IP  : ")); display.println(apIP);
+        display.display();
+    }
+
+    server.on(F("/"), handleRoot);
+    // setup page (GET to render, POST to save)
+    server.on(F("/setup"), HTTP_GET, handleSetupGet);
+    // current config as JSON (password intentionally omitted)
+    server.on(F("/config"), HTTP_GET, []() {
+        String json = F("{");
+        json += F("\"ssid\":"); json += '"'; json += ssid; json += '"'; json += F(",");
+        json += F("\"mdns\":"); json += '"'; json += mdns_name; json += '"';
+        json += F("}");
+        server.send(200, F("application/json"), json);
+    });
+    server.on(F("/setup"), HTTP_POST, handleSetupPost);
+
+	server.onNotFound(handleNotFound);
+
+	server.on(F("/wifi"), []() {
+		showScreenInit(0);
+		server.send(200, F("text/plain"), F(""));
+		});
+
+	server.on(F("/time"), []() {
+		showScreenInit(1);
+		server.send(200, F("text/plain"), F(""));
+		});
+
+	server.on(F("/eyes"), []() {
+		showScreenInit(2);
+		server.send(200, F("text/plain"), F(""));
+		});
+
+	server.on(F("/meteo"), []() {
+		showScreenInit(3);
+		server.send(200, F("text/plain"), F(""));
+		});
+
+		server.on(F("/gol"), []() {
+			showScreenInit(4);
+			server.send(200, F("text/plain"), F(""));
+			});
+
+		server.on(F("/cycle"), []() {
+			// Enable auto cycle mode and show marker screen
+			CicloScreen = true;
+			showScreenInit(5);
+			server.send(200, F("text/plain"), F(""));
+			});
+
+		// status endpoint
+		server.on(F("/status"), handleStatus);
+
+		// OLED buffer endpoint
+		server.on(F("/oled"), handleOled);
+
+	server.begin();
+	display.println(F("HTTP server start")); display.display();
+
+	display.setCursor(0, 0);
+	display.display();
+
+	ArduinoOTA.onStart([]() {
+		digitalWrite(LED_BUILTIN, LOW);
+		display.setTextSize(1);
+		display.clearDisplay();
+		display.setCursor(0, 0);
+		display.println(F("Start updating "));
+
+		if (ArduinoOTA.getCommand() == U_FLASH) {
+			display.println(F("sketch"));
+		}
+		else { // U_FS
+			display.println(F("filesystem"));
+			LittleFS.end();
+		}
+
+		display.display();
+
+		delay(1000);
+
+		});
+
+	ArduinoOTA.onEnd([]() {
+		digitalWrite(LED_BUILTIN, HIGH);
+		display.setTextSize(1);
+		display.clearDisplay();
+		display.setCursor(0, 0);
+		display.println(F("End updating "));
+		display.println(F("Reboot "));
+		display.display();
+		});
+
+	ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+		display.setTextSize(1);
+		display.setCursor(0, 0);
+		display.clearDisplay();
+		display.print(F("Progress "));
+		display.print((progress / (total / 100)));
+		display.println(F(" %"));
+		display.println(progress);
+		display.println(total);
+		display.display();
+		});
+
+	ArduinoOTA.onError([](ota_error_t error) {
+		digitalWrite(LED_BUILTIN, HIGH);
+		display.setTextSize(1);
+		display.clearDisplay();
+		display.setCursor(0, 0);
+		display.print(F("Error ")); display.println(error);
+
+		if (error == OTA_AUTH_ERROR) {
+			display.println(F("Auth Failed"));
+		}
+		else if (error == OTA_BEGIN_ERROR) {
+			display.println(F("Begin Failed"));
+		}
+		else if (error == OTA_CONNECT_ERROR) {
+			display.println(F("Connect Failed"));
+		}
+		else if (error == OTA_RECEIVE_ERROR) {
+			display.println(F("Receive Failed"));
+		}
+		else if (error == OTA_END_ERROR) {
+			display.println(F("End Failed"));
+		}
+
+		display.display();
+
+		});
+
+	ArduinoOTA.begin();
+
+	configTime(TZ_Europe_Rome, "pool.ntp.org");
+	time_t rtc = 0;
+	timeval tv = { rtc, 0 };
+	settimeofday(&tv, nullptr);
+	settimeofday_cb(time_is_set_scheduled);
+
+	delay(500);
+
+}
+
+void loop(void) {
+    ArduinoOTA.handle();
+    server.handleClient();
+    MDNS.update();
+    Bottone.Update();
+
+    // Periodic brightness adjustment based on local time (night dim)
+    if (adjustBrightnessNow) {
+        time_t nowt = time(nullptr);
+        const tm* lt = localtime(&nowt);
+        if (lt) {
+            int h = lt->tm_hour;
+            bool night = (h >= 22 || h < 7); // 22:00–06:59 dimmed
+            display.dim(night);
+        }
+    }
+
+    // Short inversion pulse every 2 minutes to mitigate burn-in
+    if (invertPulseNow) {
+        display.invertDisplay(true);
+        display.display();
+        delay(250);
+        display.invertDisplay(false);
+        display.display();
+    }
+
+	if (Bottone.Pressed()) {
+		display.invertDisplay(true);
+		display.display();
+		delay(200);
+		display.invertDisplay(false);
+		display.display();
+
+		if (!CicloScreen) {
+			showScreenInit(screen.Next());
+		}
+
+		CicloScreen = false;
+	}
+
+	if (CicloScreen && showCicloScreenNow) {
+		unsigned int sn = screen.Next();
+		if (sn == 0 || sn == 5) {
+			sn = screen.Current(1);
+		}
+		showScreenInit(sn);
+	}
+
+	switch (screen.Current())
+	{
+	case 0:
+		if (showWifiNow) {
+			showScreen0(true);
+		}
+		break;
+	case 1:
+		if (showTimeNow) {
+			showScreen1();
+		}
+		break;
+	case 2:
+		if (showEyesNow) {
+			showScreen2();
+		}
+		break;
+	case 3:
+		if (showMeteoNow) {
+			digitalWrite(LED_BUILTIN, LOW);
+			meteo.Update();
+			digitalWrite(LED_BUILTIN, HIGH);
+			showScreen3();
+		}
+		break;
+	case 4:
+		if (showGOLNow) {
+			GOL.Update();
+			showScreen4();
+		}
+		break;
+	case 5:
+		if (!CicloScreen && showCicloScreenNow) {
+			CicloScreen = true;
+			showScreen5();
+		}
+		break;
+	}
+
+}
+
+// ================= HTTP Handlers (definitions) =================
+void handleSetupGet() {
+    digitalWrite(LED_BUILTIN, LOW);
+    String message = F("");
+    if (LittleFS.exists("/SETUP.HTM")) {
+        File fhtm = LittleFS.open("/SETUP.HTM", "r");
+        if (fhtm) { message = fhtm.readString(); fhtm.close(); }
+    }
+    server.send(200, F("text/html"), message);
+    digitalWrite(LED_BUILTIN, HIGH);
+}
+
+void handleSetupPost() {
+    String nsid = server.hasArg("ssid") ? server.arg("ssid") : String(""); nsid.trim();
+    String npwd = server.hasArg("pwd") ? server.arg("pwd") : String(""); npwd.trim();
+    String nmdn = server.hasArg("mdns") ? server.arg("mdns") : String(""); nmdn.trim();
+    bool ok = true;
+    if (!LittleFS.begin()) ok = false;
+    if (ok && nsid.length()) { File f = LittleFS.open("/WIFI_SID.TXT", "w"); if (f) { f.print(nsid); f.close(); } else ok = false; }
+    if (ok && npwd.length()) { File f = LittleFS.open("/WIFI_PWD.TXT", "w"); if (f) { f.print(npwd); f.close(); } else ok = false; }
+    if (ok && nmdn.length()) { File f = LittleFS.open("/MDNS_NM.TXT", "w"); if (f) { f.print(nmdn); f.close(); } else ok = false; }
+    if (ok) {
+        server.send(200, F("text/plain"), F("OK, riavvio in corso..."));
+        delay(1000);
+        ESP.restart();
+    } else {
+        server.send(500, F("text/plain"), F("Errore scrittura parametri"));
+    }
+}
+
+void handleStatus() {
+    IPAddress ip = WiFi.localIP();
+    int rssi = WiFi.RSSI();
+    int qual = dBmtoPercentage(rssi);
+    WiFiMode_t mode = WiFi.getMode();
+    bool apMode = (mode == WIFI_AP || mode == WIFI_AP_STA);
+    IPAddress apIP = WiFi.softAPIP();
+    String json = F("{");
+    json += F("\"ip\":\""); json += ip.toString(); json += F("\",");
+    json += F("\"mdns\":\""); json += mdns_name; json += F("\",");
+    json += F("\"rssi\":"); json += rssi; json += F(",");
+    json += F("\"quality\":"); json += qual; json += F(",");
+    json += F("\"mode\":\""); json += (apMode ? F("AP") : F("STA")); json += F("\",");
+    json += F("\"ap_ip\":\""); json += apIP.toString(); json += F("\"");
+    json += F("}");
+    server.send(200, F("application/json"), json);
+}
+
+void handleOled() {
+    uint16_t w = display.width();
+    uint16_t h = display.height();
+    uint16_t pages = (h + 7) / 8;
+    (void)pages; // unused but documents layout
+    size_t sz = (size_t)w * ((h + 7) / 8);
+    const uint8_t* buf = display.getBuffer();
+
+    String json;
+    json.reserve(32 + (sz * 2));
+    json += F("{\"w\":"); json += w; json += F(",\"h\":"); json += h; json += F(",\"data\":\"");
+    static const char hex[] = "0123456789ABCDEF";
+    for (size_t i = 0; i < sz; i++) {
+        uint8_t v = buf[i];
+        json += hex[v >> 4];
+        json += hex[v & 0x0F];
+    }
+    json += F("\"}");
+    server.send(200, F("application/json"), json);
+}
