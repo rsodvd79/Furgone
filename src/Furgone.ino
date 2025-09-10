@@ -58,6 +58,7 @@ void handleSetupGet();
 void handleSetupPost();
 void handleStatus();
 void handleOled();
+void handleFavicon();
 
 void handleRoot() {
 	digitalWrite(LED_BUILTIN, LOW);
@@ -587,6 +588,8 @@ void setup(void) {
     }
 
     server.on(F("/"), handleRoot);
+    // favicon for browser tabs
+    server.on(F("/favicon.ico"), HTTP_GET, handleFavicon);
     // setup page (GET to render, POST to save)
     server.on(F("/setup"), HTTP_GET, handleSetupGet);
     // current config as JSON (password intentionally omitted)
@@ -887,4 +890,22 @@ void handleOled() {
     }
     json += F("\"}");
     server.send(200, F("application/json"), json);
+}
+
+void handleFavicon() {
+    // Serve /favicon.ico from LittleFS with proper content type and caching
+    if (!LittleFS.begin()) {
+        server.send(404, F("text/plain"), F(""));
+        return;
+    }
+    if (LittleFS.exists("/favicon.ico")) {
+        File f = LittleFS.open("/favicon.ico", "r");
+        if (f) {
+            server.sendHeader(F("Cache-Control"), F("public, max-age=604800, immutable"));
+            server.streamFile(f, F("image/x-icon"));
+            f.close();
+            return;
+        }
+    }
+    server.send(404, F("text/plain"), F(""));
 }
