@@ -51,6 +51,7 @@ classMeteo meteo = classMeteo();
 classScreen screen = classScreen(5);
 bool CicloScreen = false;
 classGOL GOL = classGOL();
+bool mdnsStarted = false;
 
 // HTTP handlers prototypes
 void handleSetupGet();
@@ -105,7 +106,7 @@ void time_is_set_scheduled() {
 
 		xnow = time(nullptr);
 
-		const tm* tm = localtime(&xnow);
+		//const tm* tm = localtime(&xnow);
 
 		gettimeofday(&tv, nullptr);
 		constexpr int days = 30;
@@ -501,6 +502,12 @@ void setup(void) {
     // decide network mode
     if (wifiConfigured && ssid.length() > 0 && password.length() > 0) {
         WiFi.mode(WIFI_STA);
+        // Avoid auto-reconnect loops while we manage fallback
+        WiFi.setAutoConnect(false);
+        WiFi.setAutoReconnect(false);
+        WiFi.persistent(false);
+        // Set DHCP hostname before connecting so router registers it
+        WiFi.hostname(mdns_name.c_str());
         WiFi.begin(ssid, password);
 
         // Wait for connection with timeout
@@ -525,9 +532,12 @@ void setup(void) {
 
             if (MDNS.begin(mdns_name)) {
                 display.println(F("mDNS responder start"));
+                MDNS.addService("http", "tcp", 80);
+                mdnsStarted = true;
             }
             else {
                 display.println(F("mDNS responder stop"));
+                mdnsStarted = false;
             }
 
             display.display();
@@ -536,7 +546,16 @@ void setup(void) {
             WiFi.disconnect(true);
             WiFi.mode(WIFI_AP);
             WiFi.softAP(mdns_name.c_str());
+            delay(100);
             IPAddress apIP = WiFi.softAPIP();
+
+            // Optionally start mDNS also in AP mode so MDNS.update() is safe
+            if (MDNS.begin(mdns_name)) {
+                MDNS.addService("http", "tcp", 80);
+                mdnsStarted = true;
+            } else {
+                mdnsStarted = false;
+            }
 
             display.clearDisplay();
             display.setCursor(0, 0);
@@ -549,7 +568,15 @@ void setup(void) {
         // Fallback AP mode with SSID = mdns_name, open network
         WiFi.mode(WIFI_AP);
         WiFi.softAP(mdns_name.c_str());
+        delay(100);
         IPAddress apIP = WiFi.softAPIP();
+
+        if (MDNS.begin(mdns_name)) {
+            MDNS.addService("http", "tcp", 80);
+            mdnsStarted = true;
+        } else {
+            mdnsStarted = false;
+        }
 
         display.clearDisplay();
         display.setCursor(0, 0);
@@ -688,7 +715,9 @@ void setup(void) {
 
 		});
 
-	ArduinoOTA.begin();
+    // Make OTA service advertise with the same friendly hostname
+    ArduinoOTA.setHostname(mdns_name.c_str());
+    ArduinoOTA.begin();
 
 	configTime(TZ_Europe_Rome, "pool.ntp.org");
 	time_t rtc = 0;
@@ -703,7 +732,9 @@ void setup(void) {
 void loop(void) {
     ArduinoOTA.handle();
     server.handleClient();
-    MDNS.update();
+    if (mdnsStarted) {
+        MDNS.update();
+    }
     Bottone.Update();
 
     // Periodic brightness adjustment based on local time (night dim)
