@@ -38,6 +38,7 @@
 #include <Adafruit_SSD1306.h>
 #include <ArduinoOTA.h>
 #include <LittleFS.h> // LittleFS is declared
+#include <math.h>
 #include "eyes.h"
 #include "meteo.h"
 #include "Button.h"
@@ -60,6 +61,7 @@ static esp8266::polledTimeout::periodicMs showEyesNow(125);
 static esp8266::polledTimeout::periodicMs showMeteoNow(1000 * 30);
 static esp8266::polledTimeout::periodicMs showCicloScreenNow(1000 * 60);
 static esp8266::polledTimeout::periodicMs showGOLNow(80);
+static esp8266::polledTimeout::periodicMs showTriNow(60);
 static esp8266::polledTimeout::periodicMs adjustBrightnessNow(1000 * 60);
 static esp8266::polledTimeout::periodicMs invertPulseNow(1000 * 60 * 30);
 static int time_machine_days = 0; // 0 = now
@@ -71,7 +73,7 @@ ESP8266WebServer server(80);
 classEye eye = classEye();
 classButton Bottone = classButton(12, ButtonType::PULLUP);
 classMeteo meteo = classMeteo();
-classScreen screen = classScreen(5);
+classScreen screen = classScreen(6);
 bool CicloScreen = false;
 classGOL GOL = classGOL();
 bool mdnsStarted = false;
@@ -401,7 +403,91 @@ void showScreen4() {
 	display.display();
 }
 
+// Animated triangle: 3 independent vertices bounce with slight random angle change
 void showScreen5() {
+	const int W = display.width();
+	const int H = display.height();
+	static bool init = false;
+	static float x[3], y[3], vx[3], vy[3];
+    if (!init) {
+        // seed PRNG for initial directions
+        randomSeed(analogRead(0));
+		// Initialize positions and velocities
+		for (int i = 0; i < 3; i++) {
+			x[i] = random(8, max(9, W - 8));
+			y[i] = random(4, max(5, H - 4));
+			float ang = (float)random(0, 360) * 0.01745329252f; // deg -> rad
+			float spd = ((float)random(45, 110)) / 100.0f;     // 0.45..1.10 px/tick
+            vx[i] = cos(ang) * spd;
+            vy[i] = sin(ang) * spd;
+        }
+        init = true;
+    }
+
+	// Advance + bounce with slight random deflection on impact
+	for (int i = 0; i < 3; i++) {
+		float nx = x[i] + vx[i];
+		float ny = y[i] + vy[i];
+
+		bool bounced = false;
+		bool hitVertical = false;
+		bool hitHorizontal = false;
+
+		if (nx < 0.0f) {
+			nx = 0.0f; hitVertical = true; bounced = true;
+		}
+		else if (nx > (float)(W - 1)) {
+			nx = (float)(W - 1); hitVertical = true; bounced = true;
+		}
+		if (ny < 0.0f) {
+			ny = 0.0f; hitHorizontal = true; bounced = true;
+		}
+		else if (ny > (float)(H - 1)) {
+			ny = (float)(H - 1); hitHorizontal = true; bounced = true;
+		}
+
+        if (bounced) {
+            // Reflect the velocity and add a small random angular perturbation
+            float speed = sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
+            if (speed < 0.05f) speed = 0.05f;
+            float theta = atan2(vy[i], vx[i]);
+            if (hitVertical) {
+                // reflect around Y axis: theta' = pi - theta
+                theta = 3.14159265f - theta;
+            }
+            if (hitHorizontal) {
+                // reflect around X axis: theta' = -theta
+                theta = -theta;
+            }
+            // Add jitter +/- ~6 degrees
+            float jitter = ((float)random(-6, 7)) * 0.01745329252f;
+            theta += jitter;
+            vx[i] = cos(theta) * speed;
+            vy[i] = sin(theta) * speed;
+        }
+
+		x[i] = nx;
+		y[i] = ny;
+	}
+
+	// Draw triangle
+	display.clearDisplay();
+    int x0 = (int)(x[0] + 0.5f); int y0 = (int)(y[0] + 0.5f);
+    int x1 = (int)(x[1] + 0.5f); int y1 = (int)(y[1] + 0.5f);
+    int x2 = (int)(x[2] + 0.5f); int y2 = (int)(y[2] + 0.5f);
+	// edges
+	display.drawLine(x0, y0, x1, y1, SSD1306_WHITE);
+	display.drawLine(x1, y1, x2, y2, SSD1306_WHITE);
+	display.drawLine(x2, y2, x0, y0, SSD1306_WHITE);
+	// vertices (emphasize corners)
+	display.drawPixel(x0, y0, SSD1306_WHITE);
+	display.drawPixel(x1, y1, SSD1306_WHITE);
+	display.drawPixel(x2, y2, SSD1306_WHITE);
+	
+	display.display();
+}
+
+void showScreen6() {
 	display.clearDisplay();
 	display.setTextSize(2);
 	display.setCursor(20, 7);
@@ -431,6 +517,9 @@ void showScreenInit(unsigned int s) {
 		break;
 	case 5:
 		showScreen5();
+		break;
+	case 6:
+		showScreen6();
 		break;
 	}
 
@@ -685,17 +774,22 @@ void setup(void) {
 		server.send(200, F("text/plain"), F(""));
 		});
 
+		server.on(F("/tri"), []() {
+			showScreenInit(5);
+			server.send(200, F("text/plain"), F(""));
+			});
+
 		server.on(F("/gol"), []() {
 			showScreenInit(4);
 			server.send(200, F("text/plain"), F(""));
 			});
 
-		server.on(F("/cycle"), []() {
-			// Enable auto cycle mode and show marker screen
-			CicloScreen = true;
-			showScreenInit(5);
-			server.send(200, F("text/plain"), F(""));
-			});
+        server.on(F("/cycle"), []() {
+            // Enable auto cycle mode and show marker screen
+            CicloScreen = true;
+            showScreenInit(6);
+            server.send(200, F("text/plain"), F(""));
+            });
 
 		// status endpoint
 		server.on(F("/status"), handleStatus);
@@ -835,16 +929,16 @@ void loop(void) {
 		CicloScreen = false;
 	}
 
-	if (CicloScreen && showCicloScreenNow) {
-		unsigned int sn = screen.Next();
-		if (sn == 0 || sn == 5) {
-			sn = screen.Current(1);
-		}
-		showScreenInit(sn);
-	}
+    if (CicloScreen && showCicloScreenNow) {
+        unsigned int sn = screen.Next();
+        if (sn == 0 || sn == 6) {
+            sn = screen.Current(1);
+        }
+        showScreenInit(sn);
+    }
 
-	switch (screen.Current())
-	{
+    switch (screen.Current())
+    {
 	case 0:
 		if (showWifiNow) {
 			showScreen0(true);
@@ -868,19 +962,24 @@ void loop(void) {
 			showScreen3();
 		}
 		break;
-	case 4:
-		if (showGOLNow) {
-			GOL.Update();
-			showScreen4();
-		}
-		break;
-	case 5:
-		if (!CicloScreen && showCicloScreenNow) {
-			CicloScreen = true;
-			showScreen5();
-		}
-		break;
-	}
+    case 4:
+        if (showGOLNow) {
+            GOL.Update();
+            showScreen4();
+        }
+        break;
+    case 5:
+        if (showTriNow) {
+            showScreen5();
+        }
+        break;
+    case 6:
+        if (!CicloScreen && showCicloScreenNow) {
+            CicloScreen = true;
+            showScreen6();
+        }
+        break;
+    }
 
 }
 

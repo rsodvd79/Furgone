@@ -2,7 +2,7 @@
 
 Firmware PlatformIO per ESP8266 (ESP‑12E) con display OLED 128×32 (SSD1306, I²C), interfaccia web su LittleFS e modulo Meteo basato su OpenWeatherMap. Consente di:
 
-- Visualizzare varie schermate su OLED: Wi‑Fi, Ora/Data, Eyes, Meteo, Game of Life, ciclo schermi
+- Visualizzare varie schermate su OLED: Wi‑Fi, Ora/Data, Eyes, Meteo, Game of Life, Triangolo animato, ciclo schermi
 - Configurare rete Wi‑Fi e nome mDNS da web UI
 - Recuperare condizioni meteo correnti via API OpenWeatherMap
 
@@ -20,7 +20,7 @@ Firmware PlatformIO per ESP8266 (ESP‑12E) con display OLED 128×32 (SSD1306, I
   - Adafruit GFX Library
   - Adafruit SSD1306
 
-Il progetto è configurato in `platformio.ini` per l’ambiente `esp12e` e usa `lib_extra_dirs = ~/Documents/Arduino/libraries`. In alternativa puoi usare `lib_deps` di PlatformIO se preferisci che PlatformIO gestisca automaticamente le dipendenze.
+Il progetto è configurato in `platformio.ini` per l’ambiente `esp01_1m` e usa `lib_deps` per gestire automaticamente le dipendenze.
 
 
 ## Hardware
@@ -35,7 +35,7 @@ Il progetto è configurato in `platformio.ini` per l’ambiente `esp12e` e usa `
 - `src/Furgone.ino`: firmware principale (OLED, web server, Wi‑Fi, mDNS, gestione schermate)
 - `src/meteo.cpp`, `src/meteo.h`: modulo meteo (OpenWeatherMap, parsing JSON)
 - `src/screen.*`, `src/eyes.*`, `src/GOL.*`, `src/Button.*`: componenti di visualizzazione/controllo
-- `src/data/`: file per LittleFS (interfaccia web e configurazioni)
+- `data/`: file per LittleFS (interfaccia web e configurazioni)
   - `INDEX.HTM`: controller web (selezione schermate, stato dispositivo)
   - `SETUP.HTM`: pagina di setup della rete Wi‑Fi
   - `WIFI_SID.TXT`, `WIFI_PWD.TXT`: SSID e password Wi‑Fi
@@ -46,7 +46,7 @@ Il progetto è configurato in `platformio.ini` per l’ambiente `esp12e` e usa `
 
 ## Configurazione (LittleFS)
 
-Il firmware legge le impostazioni da LittleFS all’avvio. Prepara i file nella cartella `src/data/` prima di caricare l’immagine del filesystem:
+Il firmware legge le impostazioni da LittleFS all’avvio. Prepara i file nella cartella `data/` prima di caricare l’immagine del filesystem:
 
 - `WIFI_SID.TXT`: SSID della rete
 - `WIFI_PWD.TXT`: password della rete
@@ -65,14 +65,14 @@ Sicurezza: evita di committare chiavi/API e credenziali. Mantieni `METEO_API.TXT
 
 Da VS Code (PlatformIO):
 
-1. Upload LittleFS: target “Upload Filesystem Image” (carica il contenuto di `src/data/`)
-2. Compila e flash: target “Upload” sull’ambiente `esp12e`
+1. Upload LittleFS: target “Upload Filesystem Image” (carica il contenuto di `data/`)
+2. Compila e flash: target “Upload” sull’ambiente `esp01_1m`
 
 Da CLI:
 
-- Build: `pio run -e esp12e`
-- Upload LittleFS: `pio run -e esp12e -t uploadfs`
-- Upload firmware: `pio run -e esp12e -t upload`
+- Build: `pio run -e esp01_1m`
+- Upload LittleFS: `pio run -e esp01_1m -t uploadfs`
+- Upload firmware: `pio run -e esp01_1m -t upload`
 
 
 ## Utilizzo
@@ -82,7 +82,20 @@ Da CLI:
 - Interfaccia web:
   - In STA: `http://<mdns>.local/` oppure `http://<ip>`
   - In AP: `http://<ip_ap>` (mostrato su OLED)
-- Dalla Home puoi cambiare schermata (Wi‑Fi, Ora, Eyes, Meteo, GOL, ciclo) e accedere a “Setup Wi‑Fi” per salvare SSID/password/mDNS.
+- Dalla Home puoi cambiare schermata (Wi‑Fi, Ora, Eyes, Meteo, GOL, Triangolo, ciclo) e accedere a “Setup Wi‑Fi” per salvare SSID/password/mDNS.
+
+### Endpoint HTTP
+
+- `/wifi` → schermata 0 (info Wi‑Fi)
+- `/time` → schermata 1 (ora/data)
+- `/eyes` → schermata 2 (eyes)
+- `/meteo` → schermata 3 (meteo)
+- `/gol` → schermata 4 (Game of Life)
+- `/tri` → schermata 5 (Triangolo animato)
+- `/cycle` → schermata 6 (attiva ciclo automatico, mostra schermo "CICLO")
+- `/status` → JSON con stato rete (ip, mdns, rssi, mode, ap_ip)
+- `/oled` → JSON con buffer OLED in hex
+- `/setup` → pagina di configurazione credenziali Wi‑Fi/mDNS
 
 Il modulo Meteo usa OpenWeatherMap: il metodo `classMeteo::Update()` effettua una GET su `http://api.openweathermap.org/data/2.5/weather?` concatenando il contenuto di `METEO_API.TXT` (temperatura, umidità, vento, descrizione, icona, eventuale neve 1h).
 
@@ -97,4 +110,3 @@ Il modulo Meteo usa OpenWeatherMap: il metodo `classMeteo::Update()` effettua un
 ## Licenza
 
 Specifica qui la licenza del progetto (es. MIT). Attualmente nessuna licenza è dichiarata.
-
