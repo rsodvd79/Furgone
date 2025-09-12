@@ -1,3 +1,27 @@
+/*
+  Furgone - ESP8266 with OLED display and web server
+  - Board: "Generic ESP8266 Module"
+  - Framework: "Arduino"
+  - Crystal Frequency: "26 MHz"
+  - Debug port: "Disabled"
+  - Flash Size: "1MB (FS:512KB OTA :~ 246KB)"
+  - C++ Exceptions: "Disabled (new aborts on oom)"
+  - Flash Frequency: "40MHz"
+  - Flash Mode: "DOUT (compatible)"
+  - IwlP Variant: "v2 Lower Memory"
+  - Builtin Led: "2"
+  - Debug Level: "None"
+  - MMU: "32KB cache + 32KB IRAM (balanced)"
+  - Non-32-Bit Access: "Use pgm_read macros for IRAM/PROGMEM"
+  - Reset Method: "dtr (aka nodemcu)"
+  - NONOS SDK Version: "nonos-sdk 2.2.1+100 (190703)"
+  - SSL Support: "All SSL ciphers (most compatible)"
+  - Stack Protection: "Disabled"
+  - VTables: "Flash"
+  - Erase Flash: "Only Sketch"
+  - CPU Frequency: "80 MHz"
+*/
+
 #include <coredecls.h>                  // settimeofday_cb()
 #include <PolledTimeout.h>
 #include <time.h>                       // time() ctime()
@@ -21,7 +45,6 @@
 #include "GOL.h"
 
 Adafruit_SSD1306 display(128, 32, &Wire, -1);
-
 
 String ssid = "";
 String password = "";
