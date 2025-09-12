@@ -61,7 +61,7 @@ static esp8266::polledTimeout::periodicMs showMeteoNow(1000 * 30);
 static esp8266::polledTimeout::periodicMs showCicloScreenNow(1000 * 60);
 static esp8266::polledTimeout::periodicMs showGOLNow(80);
 static esp8266::polledTimeout::periodicMs adjustBrightnessNow(1000 * 60);
-static esp8266::polledTimeout::periodicMs invertPulseNow(1000 * 60 * 10);
+static esp8266::polledTimeout::periodicMs invertPulseNow(1000 * 60 * 30);
 static int time_machine_days = 0; // 0 = now
 static bool time_machine_running = false;
 static bool tsep = true;
@@ -206,14 +206,52 @@ void showScreen1() {
 
 	strftime(LCDDate, 11, "%d/%m/%Y", localtime(&xnow));
 
+	// Simple horizontal + vertical bounce of the time+date block
+	static int timeX = 0;
+	static int dirX = 1; // 1 right, -1 left
+	static int timeY = 7; // starting Y similar to previous layout
+	static int dirY = 1; // 1 down, -1 up
+
+	// compute pixel widths with default font (6 px per char incl. spacing)
+	int timeChars = 8; // HH:MM:SS
+	int timeW = timeChars * 6 * 2; // textsize=2
+	int dateChars = 10; // dd/mm/yyyy
+	int dateW = dateChars * 6 * 1; // textsize=1
+
+	int maxX = 128 - timeW;
+	if (maxX < 0) maxX = 0;
+
+	// advance X position each refresh
+	timeX += dirX;
+	if (timeX <= 0) { timeX = 0; dirX = 1; }
+	else if (timeX >= maxX) { timeX = maxX; dirX = -1; }
+
+	int dateX = timeX + (timeW - dateW) / 2;
+	if (dateX < 0) dateX = 0;
+	if (dateX > 128 - dateW) dateX = 128 - dateW;
+
+	// advance Y position with constraints so both lines fit
+	const int glyphH = 8; // default font height in pixels
+	int timeH = glyphH * 2; // textsize=2
+	int dateH = glyphH * 1; // textsize=1
+	int gap = 1;            // 1 px spacing between lines
+	int maxY = 32 - (timeH + gap + dateH);
+	if (maxY < 0) maxY = 0;
+
+	timeY += dirY;
+	if (timeY <= 0) { timeY = 0; dirY = 1; }
+	else if (timeY >= maxY) { timeY = maxY; dirY = -1; }
+
+	int dateY = timeY + timeH + gap;
+
 	display.clearDisplay();
 
 	display.setTextSize(2);
-	display.setCursor(17, 7);
+	display.setCursor(timeX, timeY);
 	display.print(LCDTime);
 
 	display.setTextSize(1);
-	display.setCursor(35, 24);
+	display.setCursor(dateX, dateY);
 	display.print(LCDDate);
 
 	display.display();
