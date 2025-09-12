@@ -488,10 +488,37 @@ void showScreen5() {
 }
 
 void showScreen6() {
+	// Bouncing "CICLO" text
+	static bool init = false;
+	static int x = 0, y = 0;
+	static int dx = 1, dy = 1; // pixels per tick
+	const int W = display.width();
+	const int H = display.height();
+	const String txt = F("CICLO");
+	const int tw = txt.length() * 6 * 2; // 6 px per char at size=1, times 2
+	const int th = 8 * 2;               // 8 px glyph height at size=1, times 2
+	const int maxX = (W > tw) ? (W - tw) : 0;
+	const int maxY = (H > th) ? (H - th) : 0;
+
+	if (!init) {
+		// start near center
+		x = maxX / 2;
+		y = maxY / 2;
+		dx = 1; dy = 1;
+		init = true;
+	}
+
+	// advance
+	x += dx; y += dy;
+	if (x <= 0) { x = 0; dx = 1; }
+	else if (x >= maxX) { x = maxX; dx = -1; }
+	if (y <= 0) { y = 0; dy = 1; }
+	else if (y >= maxY) { y = maxY; dy = -1; }
+
 	display.clearDisplay();
 	display.setTextSize(2);
-	display.setCursor(20, 7);
-	display.println(F("CICLO"));
+	display.setCursor(x, y);
+	display.println(txt);
 	display.display();
 }
 
@@ -974,9 +1001,13 @@ void loop(void) {
         }
         break;
     case 6:
+        // Animate the bouncing text frequently
+        if (showTriNow) {
+            showScreen6();
+        }
+        // When not yet in auto-cycle, after a minute auto-enable it
         if (!CicloScreen && showCicloScreenNow) {
             CicloScreen = true;
-            showScreen6();
         }
         break;
     }
