@@ -812,7 +812,7 @@ void loop(void) {
         }
     }
 
-    // Short inversion pulse every 2 minutes to mitigate burn-in
+    // Short inversion pulse every 30 minutes to mitigate burn-in
     if (invertPulseNow) {
         display.invertDisplay(true);
         display.display();
