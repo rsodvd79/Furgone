@@ -88,17 +88,26 @@ void handleFavicon();
 void handleRoot() {
 	digitalWrite(LED_BUILTIN, LOW);
 
-	String message = F("");
-
+	// Serve INDEX.HTM if present, otherwise 404 with a minimal informative page
 	if (LittleFS.exists("/INDEX.HTM")) {
 		File fhtm = LittleFS.open("/INDEX.HTM", "r");
 		if (fhtm) {
-			message = fhtm.readString();
+			String message = fhtm.readString();
 			fhtm.close();
+			server.send(200, F("text/html"), message);
+			digitalWrite(LED_BUILTIN, HIGH);
+			return;
 		}
 	}
 
-	server.send(200, F("text/html"), message);
+	// Minimal fallback page
+	String body;
+	body.reserve(512);
+	body += F("<!doctype html><html lang=\"it\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>404 • INDEX.HTM mancante</title><style>body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:0;padding:24px;background:#0f172a;color:#e5e7eb}a{color:#93c5fd}</style></head><body>");
+	body += F("<h1>Pagina non trovata</h1><p>Manca il file <code>INDEX.HTM</code> su LittleFS.</p><ul>");
+	body += F("<li>Carica i file in <code>/data</code> con ‘Upload Filesystem Image’.</li>");
+	body += F("<li>Oppure vai a <a href=\"/setup\">/setup</a> per configurare il Wi‑Fi.</li></ul></body></html>");
+	server.send(404, F("text/html"), body);
 	digitalWrite(LED_BUILTIN, HIGH);
 }
 
@@ -721,7 +730,10 @@ void setup(void) {
             display.display();
         } else {
             // Connection failed: fallback to AP mode with SSID = mdns_name
+            // Ensure any previously stored STA credentials are cleared to avoid boot loops
+            WiFi.persistent(true);
             WiFi.disconnect(true);
+            WiFi.persistent(false);
             WiFi.mode(WIFI_AP);
             WiFi.softAP(mdns_name.c_str());
             delay(100);
@@ -744,6 +756,10 @@ void setup(void) {
         }
     } else {
         // Fallback AP mode with SSID = mdns_name, open network
+        // Proactively clear any saved STA credentials to avoid unintended reconnect attempts
+        WiFi.persistent(true);
+        WiFi.disconnect(true);
+        WiFi.persistent(false);
         WiFi.mode(WIFI_AP);
         WiFi.softAP(mdns_name.c_str());
         delay(100);
@@ -1017,12 +1033,26 @@ void loop(void) {
 // ================= HTTP Handlers (definitions) =================
 void handleSetupGet() {
     digitalWrite(LED_BUILTIN, LOW);
-    String message = F("");
     if (LittleFS.exists("/SETUP.HTM")) {
         File fhtm = LittleFS.open("/SETUP.HTM", "r");
-        if (fhtm) { message = fhtm.readString(); fhtm.close(); }
+        if (fhtm) {
+            String message = fhtm.readString();
+            fhtm.close();
+            server.send(200, F("text/html"), message);
+            digitalWrite(LED_BUILTIN, HIGH);
+            return;
+        }
     }
-    server.send(200, F("text/html"), message);
+
+    // Minimal fallback page when SETUP.HTM is missing
+    String body;
+    body.reserve(512);
+    body += F("<!doctype html><html lang=\"it\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>404 • SETUP.HTM mancante</title><style>body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:0;padding:24px;background:#0f172a;color:#e5e7eb}label{color:#9ca3af}input{display:block;margin-top:6px}</style></head><body>");
+    body += F("<h1>Setup non disponibile</h1><p>Manca il file <code>SETUP.HTM</code> su LittleFS.</p><p>Consigli:</p><ul>");
+    body += F("<li>Carica i file in <code>/data</code> con ‘Upload Filesystem Image’.</li>");
+    body += F("<li>Se sei in AP, collega a SSID <strong>"); body += mdns_name; body += F("</strong> e visita <a href=\"/\">Home</a>.</li></ul>");
+    body += F("</body></html>");
+    server.send(404, F("text/html"), body);
     digitalWrite(LED_BUILTIN, HIGH);
 }
 
